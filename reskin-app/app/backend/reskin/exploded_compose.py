@@ -204,6 +204,8 @@ def build_exploded_composite(
             "cy": meta["cy"],
             "w": img.width,
             "h": img.height,
+            "flip_x": sx < 0,
+            "flip_y": sy < 0,
         })
 
     _resolve_overlaps(placed, padding)
@@ -224,6 +226,7 @@ def build_exploded_composite(
         composite.paste(p["img"], (x, y), p["img"])
         placements[p["region"]] = {
             "x": x, "y": y, "w": int(p["w"]), "h": int(p["h"]),
+            "flip_x": p["flip_x"], "flip_y": p["flip_y"],
         }
 
     composite.save(workdir / "composite.png")

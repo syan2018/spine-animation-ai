@@ -16,7 +16,6 @@ export function App() {
   const project = useStore((s) => s.project);
   const setProject = useStore((s) => s.setProject);
   const refreshSecrets = useStore((s) => s.refreshSecrets);
-  const ensureSecrets = useStore((s) => s.ensureSecrets);
   const keyPrompt = useStore((s) => s.keyPrompt);
   const setKeyPrompt = useStore((s) => s.setKeyPrompt);
   const [generateOpen, setGenerateOpen] = useState(false);
@@ -57,7 +56,7 @@ export function App() {
     <div className="app">
       <TopBar
         onOpen={onOpen}
-        onGenerate={() => { if (ensureSecrets(['GEMINI_API_KEY', 'FAL_KEY'], 'generate a look')) setGenerateOpen(true); }}
+        onGenerate={() => setGenerateOpen(true)}
         onSettings={() => setSettingsOpen(true)}
         onLogs={() => setLogsOpen(true)}
         onExport={async () => {
@@ -85,7 +84,7 @@ export function App() {
       <PartEditor />
 
       {generateOpen && project && (
-        <GlobalGenerateModal onClose={() => setGenerateOpen(false)} />
+        <GlobalGenerateModal key={project.path} onClose={() => setGenerateOpen(false)} />
       )}
       {settingsOpen && (
         <SettingsModal onClose={() => { setSettingsOpen(false); refreshSecrets(); }} />

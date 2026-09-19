@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reskin in Codex"
+  short_description: "Generate character looks and import them into Reskin Studio"
+  default_prompt: "Use $reskin-in-codex to generate and import the look from my prepared Reskin Studio task."

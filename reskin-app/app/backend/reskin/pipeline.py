@@ -34,13 +34,12 @@ from .exploded_compose import (
 VALID_METHODS = {"atlas", "exploded"}
 
 
-async def full_reskin(
+def prepare_reskin(
     project_dir: Path,
     workdir: Path,
     skin_name: str,
     user_prompt: str,
     *,
-    image_provider,
     method: str = "atlas",
     atlas_path: Path | None = None,
     atlas_sheet_path: Path | None = None,
@@ -48,9 +47,7 @@ async def full_reskin(
     reference_prompt: str = "",
     pipeline_logger=None,
 ) -> dict:
-    """Run the chosen reskin pipeline. Returns layout + paths the frontend
-    uses to preview the result.
-    """
+    """Build the input and prompt without calling an image provider."""
     if method not in VALID_METHODS:
         raise ValueError(f"unknown method {method!r}; expected one of {sorted(VALID_METHODS)}")
 
@@ -139,6 +136,48 @@ async def full_reskin(
                 "do not include any of its characters/elements in the output."
             )
 
+    return {
+        "layout": layout,
+        "prompt": prompt,
+        "negative_prompt": negative,
+        "reference_images": refs,
+        "composite_path": composite_path,
+        "output_path": reskinned_composite_path,
+    }
+
+
+async def full_reskin(
+    project_dir: Path,
+    workdir: Path,
+    skin_name: str,
+    user_prompt: str,
+    *,
+    image_provider,
+    method: str = "atlas",
+    atlas_path: Path | None = None,
+    atlas_sheet_path: Path | None = None,
+    reference_image_path: Path | None = None,
+    reference_prompt: str = "",
+    pipeline_logger=None,
+) -> dict:
+    """Prepare, generate, then finish using the app's image provider."""
+    import time as _time
+
+    prepared = prepare_reskin(
+        project_dir, workdir, skin_name, user_prompt, method=method,
+        atlas_path=atlas_path, atlas_sheet_path=atlas_sheet_path,
+        reference_image_path=reference_image_path, reference_prompt=reference_prompt,
+        pipeline_logger=pipeline_logger,
+    )
+    project_dir = Path(project_dir)
+    workdir = Path(workdir) / skin_name
+    layout = prepared["layout"]
+    prompt = prepared["prompt"]
+    negative = prepared["negative_prompt"]
+    refs = prepared["reference_images"]
+    composite_path = prepared["composite_path"]
+    reskinned_composite_path = prepared["output_path"]
+
     # Snapshot only what the MODEL actually sees: optional reference + padded
     # composite. The unpadded composite is logged separately as a build step
     # above, so it shouldn't appear here too (otherwise the atlas thumbnail
@@ -205,6 +244,14 @@ async def full_reskin(
             duration_ms=(_time.time() - t0) * 1000,
         )
 
+    return finish_reskin(project_dir, workdir, skin_name, layout)
+
+
+def finish_reskin(project_dir: Path, workdir: Path, skin_name: str, layout: dict) -> dict:
+    """Split a generated composite into the files consumed by rebake."""
+    method = layout.get("mode", "atlas")
+    composite_path = workdir / "composite.png"
+    reskinned_composite_path = workdir / "reskinned_composite.png"
     composite = Image.open(reskinned_composite_path).convert("RGBA")
     cw, ch = composite.size
     expected = (layout["composite_w"], layout["composite_h"])
@@ -216,8 +263,8 @@ async def full_reskin(
     response: dict = {
         "skin_name": skin_name,
         "method": method,
-        "composite": str(composite_path.relative_to(project_dir)),
-        "reskinned_composite": str(reskinned_composite_path.relative_to(project_dir)),
+        "composite": composite_path.relative_to(project_dir).as_posix(),
+        "reskinned_composite": reskinned_composite_path.relative_to(project_dir).as_posix(),
         "layout": layout,
     }
 
@@ -230,7 +277,7 @@ async def full_reskin(
         atlas_half_path = workdir / "reskinned_atlas.png"
         snap_half.save(snap_half_path)
         atlas_half.save(atlas_half_path)
-        response["reskinned_snapshot"] = str(snap_half_path.relative_to(project_dir))
-        response["reskinned_atlas"] = str(atlas_half_path.relative_to(project_dir))
+        response["reskinned_snapshot"] = snap_half_path.relative_to(project_dir).as_posix()
+        response["reskinned_atlas"] = atlas_half_path.relative_to(project_dir).as_posix()
 
     return response

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useStore } from '../../state/store';
-import { api, type GenerateResponse, type Project, type RebakeResponse } from '../../api/client';
+import { api, type GenerateResponse, type HandoffJob, type Project, type RebakeResponse } from '../../api/client';
 import { snapshotCanvas } from '../../canvasSnapshot';
+import { CodexHandoffPanel } from './CodexHandoffPanel';
 
 const slug = (s: string) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32);
@@ -17,11 +18,18 @@ export function GlobalGenerateModal({ onClose }: { onClose: () => void }) {
   const [rebakeResult, setRebakeResult] = useState<RebakeResponse | null>(null);
   const [wipe, setWipe] = useState(50);
   const [beforeUrl, setBeforeUrl] = useState<string | null>(null);
+  const [source, setSource] = useState<'codex' | 'gemini'>('codex');
+  const onImported = useCallback((job: HandoffJob) => {
+    setResult(job.result);
+    setRebakeResult(job.rebake);
+    setBeforeUrl(null);
+  }, []);
 
   const finalSkinName = skinName.trim() || slug(prompt) || 'unnamed';
 
   const generate = async () => {
     if (!project || !prompt.trim()) return;
+    if (!useStore.getState().ensureSecrets(['GEMINI_API_KEY', 'FAL_KEY'], 'generate a look')) return;
     setBusy(true);
     try {
       // Snapshot upload is only required by the atlas method (which uses the
@@ -63,7 +71,7 @@ export function GlobalGenerateModal({ onClose }: { onClose: () => void }) {
       const fresh = await api.getStatus();
       if (fresh.open) refreshProjectSkins(fresh as Project);
     } catch (e) { /* non-fatal */ }
-    setActiveSkin(finalSkinName);
+    setActiveSkin(result.skin_name);
     onClose();
   };
 
@@ -79,6 +87,13 @@ export function GlobalGenerateModal({ onClose }: { onClose: () => void }) {
 
         {!result ? (
           <div className="modal-body">
+            <label className="field"><span>Generate with</span>
+              <select value={source} onChange={(e) => setSource(e.target.value as 'codex' | 'gemini')}>
+                <option value="codex">Codex workflow</option>
+                <option value="gemini">Gemini API</option>
+              </select>
+            </label>
+            {source === 'codex' ? <CodexHandoffPanel onImported={onImported} /> : <>
             <div className="muted" style={{ fontSize: 'var(--text-xs)' }}>
               Method: <b>{methodLabel}</b> · change in Settings
             </div>
@@ -106,12 +121,13 @@ export function GlobalGenerateModal({ onClose }: { onClose: () => void }) {
                 {busy ? 'Generating…' : 'Generate'}
               </button>
             </div>
+            </>}
           </div>
         ) : (
           <div className="modal-body">
             <div className="report">
               {rebakeResult ? (
-                <>Atlas regions: <b>{rebakeResult.saved.length}</b>{rebakeResult.sam_used ? ' · SAM masks applied' : ' · plain bbox crops (no SAM)'} · method: <b>{result.method}</b></>
+                <>Atlas regions: <b>{rebakeResult.saved.length}</b>{rebakeResult.mask_method === 'original' ? ' · original outlines preserved' : rebakeResult.sam_used ? ' · SAM masks applied' : ' · plain bbox crops (no SAM)'} · method: <b>{result.method}</b></>
               ) : (
                 <span className="muted">Rebake failed — preview shows the raw reskin output.</span>
               )}

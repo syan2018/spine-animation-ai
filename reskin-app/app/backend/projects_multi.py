@@ -119,6 +119,15 @@ def find_project_candidates(folder: Path) -> list[ProjectCandidate]:
             continue
         triplets.append((base, json_path, atlas_path, sheet_path))
 
+    # Generated looks have their own JSON/atlas/image triplet but are not
+    # separate characters. Keep reopening a project stable after importing.
+    skin_root = folder / ".genie" / "skins"
+    if skin_root.is_dir():
+        bases = {item[0] for item in triplets}
+        skin_names = [p.name for p in skin_root.iterdir() if p.is_dir()]
+        generated = {f"{base}-{skin}" for base in bases for skin in skin_names}
+        triplets = [item for item in triplets if item[0] not in generated]
+
     if not triplets:
         return []
 

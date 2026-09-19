@@ -10,7 +10,7 @@ import io
 import json
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 # Load .env early.
 try:
@@ -22,7 +22,8 @@ except ImportError:
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from PIL import Image
 
 from . import projects, secrets_store, settings as settings_mod
@@ -33,6 +34,7 @@ from .imaging import SlotEdit, apply_edit
 from .logs import PipelineLogger
 from .reskin.atlas_rebake import rebake_skin
 from .reskin.pipeline import full_reskin
+from .reskin import handoff
 from .spine import atlas_reader
 from .spine.atlas_repack import repack_atlas
 from .spine.skin_writer import add_skin
@@ -96,6 +98,12 @@ class GeneratePayload(BaseModel):
 
 class RebakePayload(BaseModel):
     skin_name: str
+
+
+class HandoffPayload(BaseModel):
+    skin_name: str
+    prompt: str = Field(min_length=1, max_length=8000)
+    method: Literal["atlas", "exploded"] = "exploded"
 
 
 class InpaintSlotPayload(BaseModel):
@@ -162,6 +170,10 @@ async def project_snapshot(request: Request, skin_name: str = Query(...)):
     this file as the source image for Gemini.
     """
     project = _State.require_project()
+    try:
+        handoff.validate_skin_name(skin_name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     body = await request.body()
     if not body:
         raise HTTPException(400, "empty body")
@@ -188,7 +200,7 @@ def project_file(rel: str, v: Optional[str] = Query(None)):
     """
     project = _State.require_project()
     full = (project.path / rel).resolve()
-    if not str(full).startswith(str(project.path.resolve())):
+    if not full.is_relative_to(project.path.resolve()):
         raise HTTPException(403, "path escapes project root")
     if not full.is_file():
         raise HTTPException(404, str(full))
@@ -210,6 +222,48 @@ def project_file(rel: str, v: Optional[str] = Query(None)):
 
 
 # ───────── Reskin ─────────
+
+
+def _handoff_call(operation, *args):
+    try:
+        return operation(*args)
+    except (handoff.HandoffConflict, FileExistsError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/reskin/handoffs")
+def prepare_handoff(payload: HandoffPayload):
+    return _handoff_call(
+        handoff.create_handoff, _State.require_project(),
+        payload.skin_name, payload.prompt, payload.method,
+    )
+
+
+@app.get("/api/reskin/handoffs")
+def list_handoffs():
+    return {"jobs": handoff.list_handoffs(_State.require_project())}
+
+
+@app.get("/api/reskin/handoffs/{job_id}")
+def get_handoff(job_id: str):
+    return _handoff_call(handoff.get_handoff, _State.require_project(), job_id)
+
+
+@app.post("/api/reskin/handoffs/{job_id}/result")
+async def import_handoff(job_id: str, request: Request):
+    project = _State.require_project()
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > handoff.MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "image exceeds 25 MiB")
+    return await run_in_threadpool(
+        _handoff_call, handoff.import_handoff, project, job_id, bytes(body)
+    )
 
 
 @app.post("/api/reskin/rebake")

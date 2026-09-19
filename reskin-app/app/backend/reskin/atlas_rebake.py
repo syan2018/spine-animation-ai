@@ -186,6 +186,9 @@ def rebake_skin(
     *,
     sam_provider: "SAMProvider",
     pipeline_logger=None,
+    segmentation_method: str | None = None,
+    skin_dir: Path | None = None,
+    output_dir: Path | None = None,
 ) -> dict:
     """Slice the reskinned image into per-region PNGs (SAM-masked when
     available), repack into a per-skin atlas, and write the per-skin Spine
@@ -193,7 +196,8 @@ def rebake_skin(
 
     Response shape is identical for both modes — frontend contract unchanged.
     """
-    skin_dir = project.workdir / "skins" / skin_name
+    skin_dir = skin_dir or project.workdir / "skins" / skin_name
+    output_dir = output_dir or project.path
     layout_path = skin_dir / "layout_map.json"
     if not layout_path.exists():
         raise FileNotFoundError(
@@ -218,7 +222,16 @@ def rebake_skin(
     masks_dir.mkdir(parents=True, exist_ok=True)
 
     settings = load_settings()
-    seg_method = settings.segmentation.method
+    seg_method = segmentation_method or settings.segmentation.method
+    if seg_method not in {"sam", "bg_components", "original"}:
+        raise ValueError(f"unknown segmentation method: {seg_method}")
+    original_sheet = None
+    if seg_method == "original" and mode == "atlas":
+        pair = atlas_reader.find_atlas_pair(project.path, project.spine_json_path.stem)
+        if pair is None:
+            raise FileNotFoundError("original atlas is required to preserve part silhouettes")
+        with Image.open(pair[1]) as original:
+            original_sheet = original.convert("RGBA")
     sam_masks: dict[str, object] = {}
     sam_ok = False
     print(
@@ -267,7 +280,7 @@ def rebake_skin(
                     status="error",
                     error=str(e),
                 )
-    elif sam_provider.available:
+    elif seg_method == "sam" and sam_provider.available:
         try:
             sam_masks = sam_provider.segment_with_bboxes(source_path, bboxes)
             sam_ok = True
@@ -304,11 +317,34 @@ def rebake_skin(
         x, y, w, h = bb["x"], bb["y"], bb["w"], bb["h"]
         rot = rotates.get(name, 0)
         raw = _crop_region_rotated(sheet, x, y, w, h, rot)
+        original_alpha = None
+        if seg_method == "original":
+            if mode == "atlas":
+                original_alpha = _crop_region_rotated(
+                    original_sheet, x, y, w, h, rot
+                ).getchannel("A")
+            else:
+                with Image.open(project.path / f"{name}.png") as original:
+                    original_alpha = original.convert("RGBA").getchannel("A")
+                placement = layout["placements"][name]
+                if placement.get("flip_x"):
+                    raw = raw.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                if placement.get("flip_y"):
+                    raw = raw.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+                if raw.size != original_alpha.size:
+                    raw = raw.resize(original_alpha.size, Image.Resampling.LANCZOS)
         raw.save(extracted_raw_dir / f"{name}.png")
         masked = raw.copy()
         applied_mask: Image.Image | None = None
         erode_px_used = 0
         score = None
+
+        if original_alpha is not None:
+            # Exact original alpha, including antialiased edges. This local
+            # path deliberately makes no SAM/Bria request and does not erode.
+            applied_mask = original_alpha
+            original_alpha.save(masks_dir / f"{name}.png")
+            masked.putalpha(original_alpha)
 
         if sam_ok and name in sam_masks:
             try:
@@ -382,7 +418,7 @@ def rebake_skin(
 
     atlas_name = f"{project.spine_json_path.stem}-{skin_name}"
     pack_t0 = _time.time()
-    pack_result = repack_atlas(extracted_dir, project.path, atlas_name)
+    pack_result = repack_atlas(extracted_dir, output_dir, atlas_name)
     name_map = pack_result.get("name_map", {})
     if pipeline_logger is not None:
         pipeline_logger.record(
@@ -420,7 +456,7 @@ def rebake_skin(
         placements=skin_placements,
         attachment_names=region_names,
     )
-    skin_json_path = project.path / f"{project.spine_json_path.stem}-{skin_name}.json"
+    skin_json_path = output_dir / f"{project.spine_json_path.stem}-{skin_name}.json"
     skin_json_path.write_text(json.dumps(new_spine, indent=2))
 
     (skin_dir / "sam_slots.json").write_text(json.dumps(sorted(sam_slots), indent=2))
@@ -431,7 +467,8 @@ def rebake_skin(
         "atlas_image": pack_result["image"].name,
         "skin_spine_json": skin_json_path.name,
         "sam_used": sam_ok,
-        "masks_count": len(sam_masks),
+        "masks_count": len(saved_regions) if seg_method == "original" else len(sam_masks),
+        "mask_method": seg_method if seg_method == "original" or sam_ok else "none",
         "mode": mode,
     }
 

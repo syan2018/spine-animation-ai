@@ -1,17 +1,19 @@
 # Genie Spine Reskin
 
 AI-powered reskinning for Spine 2D character projects. Loads an existing Spine
-rig, renders the character via the live `spine-pixi-v8` runtime, and lets you
-generate a new skin in one click — Gemini reskins the rendered character, SAM
-slices the result back into per-slot textures, and the new skin reassembles on
-the rig with no rectangular bleed between slots.
+rig and renders the character via the live `spine-pixi-v8` runtime. Generate an
+image in Codex and import it with the original part masks, or use the existing
+Gemini API generation and remote segmentation pipeline. Both routes build a
+new skin for the original rig.
 
 ## What you get
 
 - **Open project** — point at a folder containing `Spine.json` + `*.atlas` +
   `*.png`. The rig renders in a PixiJS canvas with the original skin.
-- **+ New skin** — describe the look (`emerald and silver royal robes`) and
-  click Generate. The pipeline:
+- **Codex workflow** — prepare an image task, generate inside Codex, and import
+  the result without an image API key in the app. See [Generate in Codex](#generate-in-codex).
+- **Gemini API generation** — describe the look (`emerald and silver royal robes`)
+  and click Generate. The legacy pipeline:
     1. Snapshots the live canvas as a clean static reference.
     2. Pads the snapshot to Gemini's nearest supported aspect ratio so the
        output maps 1:1 back to input pixels.
@@ -67,8 +69,9 @@ scripts/
 
 - Python 3.9+ (3.10+ recommended)
 - Node 18+
-- A Gemini API key (`GEMINI_API_KEY`)
-- A SAM-3 segmentation server reachable over HTTP (`SAM_SERVER_URL`)
+- For the in-app Gemini generation mode: a Gemini API key (`GEMINI_API_KEY`)
+- For remote segmentation: a SAM server (`SAM_SERVER_URL`) or Bria (`FAL_KEY`)
+- The Codex workflow below prepares and imports locally without any of these keys
 - Optional: an Anthropic API key for the chat sidebar (`ANTHROPIC_API_KEY`)
 
 ### Env vars
@@ -96,6 +99,102 @@ npm run dev
 ```
 
 Open http://localhost:5173.
+
+From the repository root on Windows (PowerShell):
+
+```powershell
+py -3.12 -m venv .venv
+.venv/Scripts/python.exe -m pip install -r reskin-app/app/backend/requirements.txt
+.venv/Scripts/python.exe -m uvicorn app.backend.server:app --host 127.0.0.1 --port 8765 --app-dir reskin-app
+```
+
+In a second terminal, run `npm ci` and `npm run dev` from
+`reskin-app/app/frontend`. Keep the backend bound to localhost; the existing app
+is a local single-project tool, not an authenticated multi-user service.
+
+## Generate in Codex
+
+This mode hands image editing to Codex's built-in image tool, then imports the
+result into the same rig. The app does not call OpenAI's paid Image API and does
+not expose a proxy for subscription credentials. Availability and usage limits
+of the built-in tool are controlled by your Codex session; the app cannot force
+a particular GPT Image model.
+
+1. Open a character in Reskin Studio and click **Generate**.
+2. Choose **Codex workflow**, enter a prompt and a new look name, then click
+   **Prepare for Codex**. Atlas mode captures the current character; exploded
+   mode requires loose part PNGs.
+3. Click **Copy request** and send it in Codex with this repository open. The
+   repository skill `$reskin-in-codex` reads the saved task and its images,
+   generates the edit using the built-in image tool, and submits the saved image.
+4. The task panel detects an imported result automatically. Review the preview
+   and click **Accept** to show the skin on the rig. Existing export controls
+   continue to work.
+
+You can also choose the saved generated image with **Import image**. Tasks
+persist under `<project>/.genie/handoffs/<id>/`; reopen **Generate** to resume one.
+If Codex has not discovered the new skill yet, start a new session in the repo
+or explicitly point it at `.agents/skills/reskin-in-codex/SKILL.md`.
+
+The importer preserves original alpha masks, including soft edges, and makes no
+SAM or Bria calls. This is intended for **surface/style changes with the same
+silhouette**. Adding wings, changing limb lengths or moving parts needs a new
+layout/rig. The app validates file format, size, aspect ratio and source asset
+hashes; Codex/user visual review is still needed to catch geometry drift.
+This uses the app's existing single-page atlas and region-part pipeline; it is
+not a general converter for arbitrary Spine mesh, clipping or multi-attachment
+assets. The imported output remains Spine JSON and atlas files, not Godot resources.
+
+### Local CLI
+
+From the repository root, with the backend running (use `.venv/Scripts/python.exe`
+in place of `python` on Windows if needed):
+
+```text
+python scripts/codex_reskin.py prepare --project "path/to/character" --skin emerald --prompt "Emerald robes with silver trim" --method exploded
+python scripts/codex_reskin.py status --manifest "path/to/manifest.json"
+python scripts/codex_reskin.py import --manifest "path/to/manifest.json" --image "path/to/generated.png"
+```
+
+For atlas preparation outside the UI, use `--method atlas --snapshot pose.png`.
+`--url http://127.0.0.1:8765` can be passed before the subcommand. The CLI uses
+only Python's standard library and returns JSON. The import command performs
+the local slice/repack step; do not call the legacy `/api/reskin/rebake` after it,
+as that endpoint uses the configured remote segmentation method.
+
+### App API contract
+
+All routes operate on the project opened via `POST /api/project/open`.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/reskin/handoffs` | Prepare with JSON `{skin_name, prompt, method}`; method defaults to `exploded` |
+| `GET /api/reskin/handoffs` | List saved tasks for this character as `{jobs: [...]}` |
+| `GET /api/reskin/handoffs/{id}` | Read task state, ordered input paths, prompt and result |
+| `POST /api/reskin/handoffs/{id}/result` | Upload PNG/JPEG/WebP bytes; validate, restore layout and build a new skin locally |
+
+A prepared task returns `id`, `status: prepared`, `manifest_path`, ordered
+`input_images`, `prompt`, `expected_size` and the original layout. A successful
+import returns `status: imported`, `result` (the existing preview response),
+and `rebake` with `mask_method: original` and output filenames.
+
+Images are limited to 25 MiB and 40 million decoded pixels. Keep the entire
+prepared canvas, including padding. A different resolution with the same aspect
+ratio is normalized; an aspect ratio difference over 1% is rejected. Do not crop
+to just the character or just the atlas. Original assets changing after prepare
+causes a conflict. Existing skins are never replaced. Retrying the same uploaded
+bytes is idempotent; another variation needs a new task/name. Failed builds stay
+in the task's staging directory and do not publish a skin.
+
+### Checks
+
+```text
+python -m pip install -r reskin-app/requirements-dev.txt
+python -m pytest reskin-app/tests -q
+```
+
+Run `npm run build` from `app/frontend`. Backend tests use synthetic image
+responses and forbid external AI calls; they do not measure model output quality.
 
 ### Ingesting a Spine project
 

@@ -71,10 +71,10 @@ export function TopBar({
           className={`settings-btn ${missingRequired.length ? 'has-alert' : ''}`}
           onClick={onSettings}
           aria-label={missingRequired.length
-            ? `Settings — ${missingRequired.length} required API key${missingRequired.length > 1 ? 's' : ''} missing`
+            ? `Settings — ${missingRequired.length} API key${missingRequired.length > 1 ? 's' : ''} missing for API features`
             : 'Settings'}
           title={missingRequired.length
-            ? `Missing: ${missingRequired.map((s) => s.label).join(', ')}`
+            ? `API features need: ${missingRequired.map((s) => s.label).join(', ')}. Codex prepare/import works without these keys.`
             : undefined}
         >
           Settings

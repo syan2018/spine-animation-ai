@@ -93,6 +93,23 @@ export type RebakeResponse = {
   skin_spine_json: string;
   sam_used: boolean;
   masks_count: number;
+  mask_method?: 'sam' | 'bg_components' | 'original' | 'none';
+};
+
+export type HandoffJob = {
+  id: string;
+  status: 'prepared' | 'imported';
+  created_at: string;
+  project_path: string;
+  skin_name: string;
+  method: ReskinMethod;
+  prompt: string;
+  manifest_path: string;
+  input_images: string[];
+  input_image: string;
+  expected_size: [number, number];
+  result: GenerateResponse | null;
+  rebake: RebakeResponse | null;
 };
 
 export type SlotEdit = {
@@ -178,6 +195,25 @@ export const api = {
     `/api/project/file/${rel.split('/').map(encodeURIComponent).join('/')}`,
   generate: (skin_name: string, prompt: string, method: ReskinMethod = 'atlas') =>
     jpost<GenerateResponse>('/api/reskin/generate', { skin_name, prompt, method }),
+  prepareHandoff: (skin_name: string, prompt: string, method: ReskinMethod) =>
+    jpost<HandoffJob>('/api/reskin/handoffs', { skin_name, prompt, method }),
+  listHandoffs: async (): Promise<HandoffJob[]> => {
+    const r = await fetch('/api/reskin/handoffs');
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return (await r.json()).jobs;
+  },
+  getHandoff: async (id: string): Promise<HandoffJob> => {
+    const r = await fetch(`/api/reskin/handoffs/${encodeURIComponent(id)}`);
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json();
+  },
+  importHandoff: async (id: string, image: File): Promise<HandoffJob> => {
+    const r = await fetch(`/api/reskin/handoffs/${encodeURIComponent(id)}/result`, {
+      method: 'POST', headers: { 'Content-Type': image.type || 'image/png' }, body: image,
+    });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json();
+  },
   uploadSnapshot: async (pngBlob: Blob, skinName: string) => {
     const r = await fetch(`/api/project/snapshot?skin_name=${encodeURIComponent(skinName)}`, {
       method: 'POST',

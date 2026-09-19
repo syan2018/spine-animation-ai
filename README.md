@@ -72,6 +72,18 @@ Think of it as a Spine rigging co-pilot. You provide the art assets; Claude does
 
 ## Quick Start
 
+### Codex workflow for Reskin Studio
+
+Use Reskin Studio's **Generate → Codex workflow** to prepare a character edit,
+then let Codex generate and import the result using the repository skill
+[`reskin-in-codex`](.agents/skills/reskin-in-codex/SKILL.md). Image editing happens
+in Codex; the app restores the layout and builds the new skin locally without
+an image API key or a remote segmentation service.
+
+See [setup, CLI and API details](reskin-app/README.md#generate-in-codex).
+This workflow currently produces Spine skins; Godot native export is planned
+separately in the [adaptation and feature assessment](docs/codex-godot-adaptation.md).
+
 ### Option A: Claude Projects (Recommended)
 
 The easiest way — works with any Claude account, no extra software needed.
