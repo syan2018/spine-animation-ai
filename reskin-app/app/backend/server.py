@@ -35,6 +35,8 @@ from .logs import PipelineLogger
 from .reskin.atlas_rebake import rebake_skin
 from .reskin.pipeline import full_reskin
 from .reskin import handoff
+from .godot.app_export import export_project as export_godot_project
+from .godot.spine_import import UnsupportedSpine
 from .spine import atlas_reader
 from .spine.atlas_repack import repack_atlas
 from .spine.skin_writer import add_skin
@@ -130,6 +132,13 @@ class ExportPayload(BaseModel):
     skin_name: str
     edits: dict[str, dict] = {}  # {slot: SlotEdit-like dict}
     write_into_main_json: bool = False  # if True, modify Spine.json in place; else write Spine_{skin}.json
+
+
+class GodotExportPayload(BaseModel):
+    skin_name: str = "default"
+    edits: dict[str, dict] = Field(default_factory=dict)
+    hidden: list[str] = Field(default_factory=list)
+    fps: int = Field(default=60, ge=12, le=120)
 
 
 # ───────── Project ─────────
@@ -897,6 +906,18 @@ def edit_preview(payload: EditPayload):
 
 
 # ───────── Export ─────────
+
+
+@app.post("/api/export/godot")
+def export_godot(payload: GodotExportPayload):
+    try:
+        return export_godot_project(
+            _State.require_project(), payload.skin_name, payload.edits, payload.hidden, payload.fps,
+        )
+    except UnsupportedSpine as exc:
+        raise HTTPException(422, detail={"unsupported": exc.issues}) from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/skin/export")

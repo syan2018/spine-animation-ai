@@ -133,6 +133,19 @@ export type ExportResponse = {
   files_copied: string[];
 };
 
+export type GodotExportResponse = {
+  status: 'exported';
+  output_dir: string;
+  scene: string;
+  project: string;
+  bones: number;
+  parts: number;
+  skins: string[];
+  animations: string[];
+  sample_fps: number;
+  notes: string[];
+};
+
 export type ErosionSettings = {
   enabled: boolean;
   px_small: number;
@@ -173,6 +186,17 @@ async function jpost<T>(url: string, body: unknown): Promise<T> {
 }
 
 export const api = {
+  exportGodot: async (skin_name: string, edits: Record<string, SlotEdit>, hidden: string[]) => {
+    const response = await fetch('/api/export/godot', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skin_name, edits, hidden }),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.detail?.unsupported?.join('\n') ?? String(body.detail ?? response.statusText));
+    }
+    return body as GodotExportResponse;
+  },
   openProject: async (path: string): Promise<Project | MultiProjectChoice> => {
     const r = await fetch('/api/project/open', {
       method: 'POST',

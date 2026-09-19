@@ -143,7 +143,21 @@ layout/rig. The app validates file format, size, aspect ratio and source asset
 hashes; Codex/user visual review is still needed to catch geometry drift.
 This uses the app's existing single-page atlas and region-part pipeline; it is
 not a general converter for arbitrary Spine mesh, clipping or multi-attachment
-assets. The imported output remains Spine JSON and atlas files, not Godot resources.
+assets. The handoff produces Spine JSON and atlas files. Use the native Godot
+export below to convert a supported rig after importing.
+
+### Export to Godot
+
+Choose **Export → Godot 4 · native cutout**. The app creates a new standalone
+Godot project containing a `Skeleton2D`/`Bone2D` rig, `Sprite2D` parts, an
+`AnimationPlayer` with editable animation resources, and skin-switching support.
+It includes saved part transforms, current visibility, and pending image edits
+for the selected active look. Unsupported Spine features produce an explicit
+report instead of being discarded. Existing Spine export remains selectable.
+
+Copy the returned `project.godot` path into Godot's project manager and run the
+preview. See [native Godot export](../docs/godot-native-export.md) for CLI usage,
+game integration, capabilities and real-engine verification.
 
 ### Local CLI
 

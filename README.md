@@ -1,5 +1,10 @@
 # 🎭 Spine Animation AI
 
+**Native Godot export:** Reskin Studio now offers **Export → Godot 4 · native
+cutout**, with editable bones, animations and skin switching. From the CLI:
+`python scripts/export_godot.py --spine examples/sombrero/sombrero.json --output .genie/godot/sombrero`.
+See [supported features and setup](docs/godot-native-export.md).
+
 > An AI-powered Claude skill for creating, rigging, and refining Spine 2D skeletal animations — from raw assets to interactive previews.
 
 [![License: PolyForm NC](https://img.shields.io/badge/License-PolyForm%20NC%201.0-blue.svg)](LICENSE)
